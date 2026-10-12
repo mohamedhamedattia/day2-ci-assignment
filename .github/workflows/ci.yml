@@ -125,15 +125,50 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # مطلوبة عشان SonarQube يقدر يقارن ويكشف الأخطاء في الكود بدقة
+          fetch-depth: 0
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  trivy-scan:
+    needs: [sonarqube]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build -t day2-ci-assignment:latest .
+
+      - name: Run Trivy vulnerability scanner on Docker Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'day2-ci-assignment:latest'
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
 
   report:
-    needs: [test, package, sonarqube]
+    needs: [test, package, sonarqube, gitleaks, trivy-scan]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -167,25 +202,3 @@ jobs:
           echo "| Test Job Result | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Package Job Result | ${{ needs.package.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| SonarQube Job Result | ${{ needs.sonarqube.result }} |" >> $GITHUB_STEP_SUMMARY
-
-
-trivy-scan:
-    needs: [sonarqube]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Build Docker Image
-        run: |
-          docker build -t day2-ci-assignment:latest .
-
-      - name: Run Trivy vulnerability scanner on Docker Image
-        uses: aquasecurity/trivy-action@master
-        with:
-          image-ref: 'day2-ci-assignment:latest'
-          format: 'table'
-          exit-code: '0' # غيرها لـ 1 لو عايز الـ Pipeline تفشل لو فيه ثغرات عالية
-          ignore-unfixed: true
-          vuln-type: 'os,library'
-          severity: 'CRITICAL,HIGH'
