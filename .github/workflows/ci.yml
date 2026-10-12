@@ -32,7 +32,7 @@ on:
 
 permissions:
   contents: read
-  pull_requests: write
+  pull-requests: read
 
 env:
   APP_NAME: temperature
