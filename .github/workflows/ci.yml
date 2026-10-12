@@ -167,3 +167,25 @@ jobs:
           echo "| Test Job Result | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Package Job Result | ${{ needs.package.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| SonarQube Job Result | ${{ needs.sonarqube.result }} |" >> $GITHUB_STEP_SUMMARY
+
+
+trivy-scan:
+    needs: [sonarqube]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build -t day2-ci-assignment:latest .
+
+      - name: Run Trivy vulnerability scanner on Docker Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'day2-ci-assignment:latest'
+          format: 'table'
+          exit-code: '0' # غيرها لـ 1 لو عايز الـ Pipeline تفشل لو فيه ثغرات عالية
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
