@@ -1,0 +1,203 @@
+name: Day 2 CI
+
+run-name: "CI run triggered by @${{ github.actor }} (${{ github.event_name }})"
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+  workflow_dispatch:
+    inputs:
+      python-version:
+        description: "Python Version"
+        required: true
+        default: "3.13"
+        type: choice
+        options:
+          - "3.12"
+          - "3.13"
+      create-package:
+        description: "Create and verify package"
+        required: true
+        default: true
+        type: boolean
+  schedule:
+    - cron: '0 7 * * 1'
+
+permissions:
+  contents: read
+
+env:
+  APP_NAME: temperature
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version || '3.13' }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-dev.txt
+
+      - name: Run tests with pytest
+        run: |
+          mkdir -p reports
+          pytest -v --junitxml=reports/junit.xml
+
+      - name: Failure Notification
+        if: failure()
+        run: |
+          echo "🚨 Tests failed on branch ${{ github.ref_name }}"
+
+      - name: Upload Test Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-report
+          path: reports/junit.xml
+          retention-days: 5
+
+  package:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.create-package == true }}
+    outputs:
+      version: ${{ steps.set_version.outputs.VERSION }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate Version
+        id: set_version
+        run: |
+          VERSION="0.1.${{ github.run_number }}"
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Tarball Package
+        run: |
+          VERSION="${{ steps.set_version.outputs.VERSION }}"
+          mkdir -p dist
+          tar -czvf dist/temperature-$VERSION.tar.gz temperature.py README.md
+
+      - name: Upload Package Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: package
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  verify:
+    needs: package
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Download Package Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: package
+          path: dist/
+
+      - name: Verify Package Contents
+        run: |
+          tar -xzvf dist/*.tar.gz
+          python3 -c "from temperature import celsius_to_fahrenheit as c; assert c(100) == 212; print('Package OK')"
+
+  sonarqube:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks Scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          exit-code: 0
+
+  trivy-scan:
+    needs: [sonarqube]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker Image
+        run: |
+          docker build -t day2-ci-assignment:latest .
+
+      - name: Run Trivy vulnerability scanner on Docker Image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: 'day2-ci-assignment:latest'
+          format: 'table'
+          exit-code: '0'
+          ignore-unfixed: true
+          vuln-type: 'os,library'
+          severity: 'CRITICAL,HIGH'
+
+  report:
+    needs: [test, package, sonarqube, gitleaks, trivy-scan]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HAS_NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN != '' }}
+    steps:
+      - name: Check Secret & Print Notification Status
+        if: env.HAS_NOTIFY_TOKEN == 'true'
+        run: |
+          token_length="${#NOTIFY_TOKEN}"
+          echo "Notification sent (token length: $token_length)"
+        env:
+          NOTIFY_TOKEN: ${{ secrets.NOTIFY_TOKEN }}
+
+      - name: Generate Job Summary
+        run: |
+          REPORT_TITLE="${{ vars.REPORT_TITLE || 'Temperature CI Report' }}"
+          VERSION="${{ needs.package.outputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="n/a"
+          fi
+          
+          echo "# $REPORT_TITLE" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric / Property | Status / Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| App Name | ${{ env.APP_NAME }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Version | $VERSION |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit SHA | ${{ github.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event Name | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Test Job Result | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package Job Result | ${{ needs.package.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SonarQube Job Result | ${{ needs.sonarqube.result }} |" >> $GITHUB_STEP_SUMMARY
