@@ -118,8 +118,22 @@ jobs:
           tar -xzvf dist/*.tar.gz
           python3 -c "from temperature import celsius_to_fahrenheit as c; assert c(100) == 212; print('Package OK')"
 
+  sonarqube:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # مطلوبة عشان SonarQube يقدر يقارن ويكشف الأخطاء في الكود بدقة
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v6
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
   report:
-    needs: [test, package]
+    needs: [test, package, sonarqube]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -152,3 +166,4 @@ jobs:
           echo "| Event Name | ${{ github.event_name }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Test Job Result | ${{ needs.test.result }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Package Job Result | ${{ needs.package.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SonarQube Job Result | ${{ needs.sonarqube.result }} |" >> $GITHUB_STEP_SUMMARY
