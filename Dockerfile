@@ -1,17 +1,14 @@
-# استخدام نسخة Python خفيفة وآمنة
-FROM python:3.10-slim
+FROM python:3.13-slim
 
-# تحديد مجلد العمل داخل الـ Container
 WORKDIR /app
 
-# نسخ ملف المتطلبات أولاً للاستفادة من الـ Cache
+# نسخ ملف المتطلبات أولاً
 COPY requirements-dev.txt .
 
-# تثبيت الحزم المطلوبة بدون كاش لتقليل الحجم
-RUN pip install --no-cache-dir -r requirements-dev.txt
+# تثبيت الحزم بأمان
+RUN pip install --no-cache-dir --only-binary :all: -r requirements-dev.txt || pip install --no-cache-dir -r requirements-dev.txt
 
-# نسخ باقي ملفات المشروع
-COPY . .
+# نسخ الملفات المطلوبة فقط لمنع نسخ أي بيانات حساسة
+COPY temperature.py README.md ./
 
-# الأمر الافتراضي لتشغيل التطبيق
 CMD ["python", "temperature.py"]
